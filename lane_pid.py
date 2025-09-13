@@ -1,0 +1,102 @@
+import cv2
+import numpy as np
+from gym_duckietown.envs import DuckietownEnv
+
+# PID контроллер
+class PID:
+    def __init__(self, Kp, Ki, Kd):
+        self.Kp = Kp
+        self.Ki = Ki
+        self.Kd = Kd
+        self.prev_error = 0
+        self.integral = 0
+
+    def control(self, error):
+        self.integral += error
+        derivative = error - self.prev_error
+        self.prev_error = error
+        return self.Kp * error + self.Ki * self.integral + self.Kd * derivative
+
+
+def detect_lane_offset(frame):
+    """
+    Находит смещение и угол полосы по изображению.
+    Возвращает (смещение, угол) или (0,0), если не найдено.
+    """
+    hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
+
+    # маски для голубой и белой линий
+    lower_blue = np.array([70, 50, 50])
+    upper_blue = np.array([100, 255, 255])
+    mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
+
+    lower_white = np.array([0, 0, 180])
+    upper_white = np.array([180, 80, 255])
+    mask_white = cv2.inRange(hsv, lower_white, upper_white)
+
+    # ищем контуры
+    contours_blue, _ = cv2.findContours(mask_blue, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours_white, _ = cv2.findContours(mask_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours_blue or not contours_white:
+        return 0, 0
+
+    blue = max(contours_blue, key=cv2.contourArea)
+    white = max(contours_white, key=cv2.contourArea)
+
+    (bx, by, bw, bh) = cv2.boundingRect(blue)
+    (wx, wy, ww, wh) = cv2.boundingRect(white)
+
+    lane_center = (bx + bw//2 + wx + ww//2) // 2
+    frame_center = frame.shape[1] // 2
+    offset = lane_center - frame_center
+
+    dx = (wx + ww//2) - (bx + bw//2)
+    dy = (wy + wh//2) - (by + bh//2)
+    angle = np.degrees(np.arctan2(dy, dx))
+
+    return offset, angle
+
+
+def main():
+
+    env = DuckietownEnv(
+    **{"seed": 128546,
+    "map_name": "straight_road", 
+    "max_steps": 1000,
+    "camera_width": 640,
+    "camera_height": 480,
+    "accept_start_angle_deg": 40, #what
+    "full_transparency": True,
+    "distortion": True,
+    "domain_rand": False
+    }
+)
+    obs = env.reset()
+
+    pid = PID(Kp=0.01, Ki=0.0, Kd=0.002)
+
+    done = False
+    total_reward = 0
+
+    while not done:
+        #offset, angle = detect_lane_offset(obs)
+        # ошибка: берём только смещение (угол можно добавить для точности)
+        #error = -offset
+        #steering = pid.control(error)
+
+        # ограничим угол поворота
+        #steering = np.clip(steering, -1, 1)
+
+        action = [0.3, 0.0]  # скорость фиксированная
+        obs, reward, done, info = env.step(np.array(action))
+
+        #total_reward += reward
+        env.render()
+
+    print("Total reward:", total_reward)
+    env.close()
+
+
+if __name__ == "__main__":
+    main()

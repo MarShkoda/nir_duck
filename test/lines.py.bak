@@ -1,0 +1,61 @@
+import sys
+import os
+
+# Добавляем корень проекта в PYTHONPATH
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from image_processing.line_processing import ImageLineProcessing
+from image_processing.line_processing import ColorLine
+
+import cv2
+import enum
+import math
+import numpy as np
+from scipy.linalg import solve_continuous_are
+from scipy import stats
+
+img = cv2.imread("85.png")
+height = 480
+width = 640
+yellow_image = ImageLineProcessing(img, width, height, ColorLine.yellow)
+yellow_angle = yellow_image.process()
+white_image = ImageLineProcessing(img, width, height, ColorLine.white)
+white_angle = white_image.process()
+print(yellow_angle)
+print(white_angle)
+
+def process_images(input_dir, output_dir, start=1, end=150):
+    height = 480
+    width = 640
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    for i in range(start, end + 1):
+        filename = f"{i}.png"
+        filepath = os.path.join(input_dir, filename)
+
+        if not os.path.exists(filepath):
+            print(f"❌ Файл {filepath} не найден, пропускаю")
+            continue
+
+        img = cv2.imread(filepath)
+
+        # обработка желтой линии
+        yellow_image = ImageLineProcessing(img, width, height, ColorLine.yellow)
+        yellow_angle = yellow_image.process()
+        yellow_outfile = os.path.join(output_dir, f"lineColorLine.yellow.png")
+        cv2.imwrite(yellow_outfile, yellow_image.image)
+
+        # обработка белой линии
+        white_image = ImageLineProcessing(img, width, height, ColorLine.white)
+        white_angle = white_image.process()
+        white_outfile = os.path.join(output_dir, f"lineColorLine.white.png")
+        cv2.imwrite(white_outfile, white_image.image)
+
+        print(f"[{i}] yellow_angle={yellow_angle}, white_angle={white_angle}")
+
+
+if __name__ == "__main__":
+    input_dir = "."        # где лежат входные картинки (1.png, 2.png, …)
+    output_dir = "." # куда сохранять результат
+    process_images(input_dir, output_dir, start=1, end=150)

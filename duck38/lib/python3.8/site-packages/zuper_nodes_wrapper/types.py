@@ -1,0 +1,1 @@
+# TopicName = NewType('TopicName' ,str)

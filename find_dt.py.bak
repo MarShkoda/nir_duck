@@ -1,0 +1,10 @@
+dt = None
+for name in ["delta_time", "dt", "delta_t"]:
+    if hasattr(env.unwrapped, name):
+        dt = getattr(env.unwrapped, name)
+if dt is None and hasattr(env.unwrapped, "simulator"):
+    for name in ["delta_time", "dt", "delta_t"]:
+        if hasattr(env.unwrapped.simulator, name):
+            dt = getattr(env.unwrapped.simulator, name)
+
+print("dt =", dt)

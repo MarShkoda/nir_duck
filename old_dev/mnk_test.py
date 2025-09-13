@@ -1,0 +1,471 @@
+import numpy as np
+from pyglet.window import key
+from gym_duckietown.envs import DuckietownEnv
+import cv2
+import enum
+import math
+from scipy.linalg import solve_continuous_are
+from scipy import stats
+import matplotlib.pyplot as plt
+
+
+class PIDController:
+    def __init__(self, kp, ki, kd):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.previous_error = 0
+        self.integral = 0
+
+    def compute(self, error, dt):
+        proportional = self.kp * error
+        
+        self.integral += error * dt
+        integral = self.ki * self.integral
+        
+        derivative = self.kd * (error - self.previous_error) / dt
+        
+        # Обновление предыдущей ошибки
+        self.previous_error = error
+        
+        return proportional + integral + derivative
+        
+@enum.unique
+class ColorLine(enum.Enum):
+    yellow = 2
+    white = 1
+
+def draw_rainbow_cont(contours, height, width):
+    #image = cv2.imread("//home//userubuntu//gym-duckietown//rubbish//logo2.png")
+    image = np.zeros((height, width, 3), np.uint8)
+    for i in range(len(contours)):
+        sel_countours=[contours[i]]
+        r = (10*i)%255
+        g = (5*i)%255
+        b = i+100
+        cv2.drawContours(image, sel_countours, -1, (r,g,b), 1)
+    return image
+
+def lines(edges, height, width):
+    houghLines = cv2.HoughLinesP( 1, np.pi / 180, 50, None, 50, 10)
+    image = np.zeros((height, width, 3), np.uint8)
+    if houghLines is not None:
+        #print(houghLines)
+        #for points in houghLines:
+        for i in range(len(houghLines)):
+      # Extracted points nested in the list
+            x1,y1,x2,y2=houghLines[i][0]
+            r = (10*i)%255
+            g = (5*i)%255
+            b = i+100
+            cv2.line(image,(x1,y1),(x2,y2),(r,g,b),2)
+    return image
+    
+def aprox(cnts, height, width):
+    #img = cv2.imread("//home//userubuntu//gym-duckietown//rubbish//logo3.png")
+    img = np.zeros((height, width, 3), np.uint8)
+    
+    key = 1
+    approx_cnt = []
+    for cnt in cnts:
+        if (cv2.arcLength(cnt, True) > 40):
+            approx = cv2.approxPolyDP(cnt, 0.05 * cv2.arcLength(cnt, True), True)
+            approx_cnt.append(approx)
+            if len(approx) < 3:
+                cv2.drawContours(img, [approx], 0, (255, 255, 255), -1)
+            if len(approx) == 3:
+                cv2.drawContours(img, [approx], 0, 255, -1)
+            elif len(approx) == 4:
+                cv2.drawContours(img, [approx], 0, (0, 255, 0), -1)
+            elif len(approx) == 5:
+                cv2.drawContours(img, [approx], 0, (0, 0, 255), -1)
+            elif len(approx) == 6:
+                cv2.drawContours(img, [approx], 0, (255, 255, 0), -1)
+            elif len(approx) == 7:
+                cv2.drawContours(img, [approx], 0, (255, 255, 255), -1)
+            elif len(approx) < 13:
+                cv2.drawContours(img, [approx], 0, (0, 0, 0), -1)
+            elif len(approx) > 12:
+                cv2.drawContours(img, [approx], 0, (0, 255, 255), -1)
+    return img, approx_cnt
+
+def aproxLine(cnts, height, width):
+    img = np.zeros((height, width, 3), np.uint8)
+    key = 1
+    for cnt in cnts:
+        if (cv2.arcLength(cnt, True) > 20):
+            approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
+            #cv2.polylines(img, [approx], isClosed=False, color=(0, 255, 0), thickness=2)
+    return img
+    
+def centerCnts(cnts, height, width):
+    img = np.zeros((height, width, 3), np.uint8)
+    min_x, min_y = width+10,height+10
+    max_x, max_y = -1,-1
+    for cnt in cnts:
+        if (cv2.arcLength(cnt, True) > 20):
+            approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
+            if len(approx) < 7:
+                cv2.drawContours(img, [approx], 0, (255, 255, 255), -1)
+                M = cv2.moments(approx)
+                if M['m00'] != 0:
+                    cx = int(M['m10']/M['m00'])
+                    cy = int(M['m01']/M['m00'])
+                    cv2.circle(img, (cx, cy), 4, (0, 0, 255), -1)
+                    if (cy < min_y):
+                        min_y = cy
+                        min_x = cx
+                    if (cy > max_y):
+                        max_y = cy
+                        max_x = cx
+    cv2.circle(img, (max_x, max_y), 4, (0, 255, 0), -1)
+    cv2.circle(img, (min_x, min_y), 4, (0, 255, 0), -1)
+    cv2.circle(img, (351, 106), 4, (255, 255, 0), -1)
+    line = [min_x, min_y, max_x, max_y]
+    return img, line
+
+def line_intersection(line1, line2):
+    x1, y1 = line1[0],line1[1]
+    x2, y2 = line1[2],line1[3]
+    x3, y3 = line2[0],line2[1]
+    x4, y4 = line2[2],line2[3]
+
+    # Коэффициенты для первой прямой
+    A1 = y2 - y1
+    B1 = x1 - x2
+    C1 = x2 * y1 - x1 * y2
+
+    # Коэффициенты для второй прямой
+    A2 = y4 - y3
+    B2 = x3 - x4
+    C2 = x4 * y3 - x3 * y4
+
+    # Определитель
+    D = A1 * B2 - A2 * B1
+
+    if D == 0:
+        # Прямые параллельны
+        return None
+    else:
+        # Найти точку пересечения
+        x = (B1 * C2 - B2 * C1) / D
+        y = (A2 * C1 - A1 * C2) / D
+        return x, y
+
+def mnk(contours):
+    height = 480
+    width = 640
+    img = np.zeros((height, width, 3), np.uint8)
+    all_points = []
+
+    for cnt in contours:
+#        if cnt.size == 0:
+#            continue
+        cnt = cnt.reshape(-1, 2)
+        all_points.append(cnt)
+
+    if len(all_points) == 0:
+        print("Нет валидных контуров для обработки.")
+        return np.nan
+
+    all_points = np.vstack(all_points)  # shape: (N, 2)
+    x = all_points[:, 0]
+    y = all_points[:, 1]
+    res = stats.linregress(x, y)
+    
+    x_start = 0
+    x_end = img.shape[1]
+    y_start = int(res.intercept + res.slope * x_start)
+    y_end = int(res.intercept + res.slope * x_end)
+    cv2.line(img, (x_start, y_start), (x_end, y_end), (0, 0, 255), thickness=2)
+    
+    text = str(round(res.slope, 3))  
+    position = (50, 100)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 2
+    color = (0, 255, 0)
+    thickness = 2
+    line_type = cv2.LINE_AA
+
+    cv2.putText(img, text, position, font, font_scale, color, thickness, line_type)
+    cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//mnk.png", img)
+    
+    return res.slope
+
+
+def parallel_lines(contours):
+    lines = []
+    res_line=[]
+    height = 480
+    width = 640
+    img = np.zeros((height, width, 3), np.uint8)
+
+    for contour in contours:
+        print("parallel ", contour)
+        # Аппроксимация контура
+        epsilon = 0.02 * cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, epsilon, True)
+        num_points = len(approx)
+        if num_points >= 2: 
+            for i in range(num_points):
+                pt1 = tuple(contour[i]) 
+                pt2 = tuple(contour[(i + 1) % num_points])  
+                lines.append(np.array([pt1, pt2], dtype=np.float32))
+
+    for line in lines:
+        [vx, vy, x, y] = cv2.fitLine(line, cv2.DIST_L2, 0, 0.01, 0.01)
+        angle = np.arctan2(vy, vx)  # Угол линии
+        with open('parallel_lines.txt', 'a+') as f:
+            f.write(f"current_angle {angle}\n")
+        res_line.append((x, y, vx, vy, angle))
+
+    parallel_lines = []
+    threshold_angle = np.radians(2)  # Углы отличаются не более чем на . градусов
+
+    for i in range(len(res_line)):
+        for j in range(i + 1, len(res_line)):
+            _, _, _, _, angle1 = res_line[i]
+            _, _, _, _, angle2 = res_line[j]
+            if abs(angle1 - angle2) < threshold_angle:  
+                parallel_lines.append((res_line[i], res_line[j]))
+
+    for line1, line2 in parallel_lines:
+        x1, y1, vx1, vy1, _ = line1
+        x2, y2, vx2, vy2, _ = line2
+        
+        pt1 = (int(x1 - vx1 * 1000), int(y1 - vy1 * 1000))
+        pt2 = (int(x1 + vx1 * 1000), int(y1 + vy1 * 1000))
+        pt3 = (int(x2 - vx2 * 1000), int(y2 - vy2 * 1000))
+        pt4 = (int(x2 + vx2 * 1000), int(y2 + vy2 * 1000))
+        
+        cv2.line(img, pt1, pt2, (255, 0, 0), 2)
+        cv2.line(img, pt3, pt4, (255, 0, 0), 2)
+    cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//parallel.png", img)
+    return img
+
+def convexYellow(contours):
+    height = 480
+    width = 640
+    img = np.zeros((height, width, 3), np.uint8)
+    if len(contours) > 0:
+        all_points = np.vstack(contours)  
+        hull = cv2.convexHull(all_points) 
+        cv2.drawContours(img, [hull], 0, (255, 255, 255), -1)
+        print("hull", hull)
+        cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//convexHull.png", img)
+    return hull
+
+def fiting_line(color, contours, height, width, img):
+    points = []
+    #max_p, min_p = [0, 0], [0, 0]
+    if (len(contours) > 0):
+        for cnt in contours:
+            sorted_cnt = sorted(cnt, key= lambda cnt: cnt[0][1])
+            #print("sort")
+            #print(sorted_cnt)
+            max_y1 = sorted_cnt[-1]
+            max_y2 = sorted_cnt[-2]
+            points.append((max_y1+max_y2)/2)
+            min_y1 = sorted_cnt[0]
+            min_y2 = sorted_cnt[1]
+            points.append((min_y1+min_y2)/2)
+        sorted_points = sorted(points, key= lambda pnts: pnts[0][1])
+        max_p = sorted_points[-1]
+        min_p = sorted_points[0]
+        #print('sorted_points')
+        #print(max_p[0])
+        #print(max_p)
+        #cv2.line(img,(int(min_p[0][0]),int(min_p[0][1])),(int(max_p[0][0]),int(max_p[0][1])),(0,255,0),2)
+    else:
+        if (ColorLine.yellow == color):
+            min_p = [[0, int(0.59 * height)]]  # верхняя граница
+            max_p = [[0, int(0.78 * height)]]  # нижняя граница
+        if (ColorLine.white == color):
+            min_p = [[width, int(0.59 * height)]]  # верхняя граница
+            max_p = [[width, int(0.78 * height)]]  # нижняя граница
+    cv2.line(img, (int(min_p[0][0]), int(min_p[0][1])), (int(max_p[0][0]), int(max_p[0][1])), (0, 255, 0), 2)
+    line = np.array([min_p[0], max_p[0]])
+    print("line", line)
+    return img, line
+
+def region_selection(image, color):
+	# create an array of the same size as of the input image 
+	mask = np.zeros_like(image) 
+	# if you pass an image with more then one channel
+	if len(image.shape) > 2:
+		channel_count = image.shape[2]
+		ignore_mask_color = (255,) * channel_count
+	# our image only has one channel so it will go under "else"
+	else:
+		# color of the mask polygon (white)
+		ignore_mask_color = 255
+	# creating a polygon to focus only on the road in the picture
+	# we have created this polygon in accordance to how the camera was placed
+	rows, cols = image.shape[:2]
+	if (ColorLine.yellow == color):
+		left_border = 0
+		right_border = 1 #0.75
+	elif (ColorLine.white == color):
+		left_border = 0.5
+		right_border = 1
+	bottom_left = [cols * left_border, rows * 0.78]
+	bottom_right = [cols * right_border, rows * 0.78]
+	top_left = [cols * left_border, rows * 0.59]
+	top_right= [cols * right_border, rows * 0.59]
+	vertices = np.array([[bottom_left, top_left, top_right, bottom_right]], dtype=np.int32)
+	cv2.fillPoly(mask, vertices, ignore_mask_color)
+	#cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//mask.png", mask)
+
+	# performing Bitwise AND on the input image and mask to get only the edges on the road
+	masked_image = cv2.bitwise_and(image, mask)
+	cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//masked_image.png", masked_image)
+	return masked_image
+    
+def moving_test(obs,step):
+    height = 480
+    width = 640
+    img = np.ascontiguousarray(obs)
+    img_orig = np.ascontiguousarray(obs)
+    
+    mask_yellow = cv2.inRange(img, (140, 140, 0), (255, 255, 150)) #подобрать значения
+    mask_white = cv2.inRange(img, (160, 160, 160), (255, 255, 255))
+    
+    mask_white = region_selection(mask_white, ColorLine.white)
+    mask_yellow = region_selection(mask_yellow, ColorLine.yellow)
+    
+
+
+    #cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//white_logo2.png", mask_white)
+    
+    # combine the masks using bitwise OR
+    mask = cv2.bitwise_or(mask_yellow, mask_white)
+    # apply the mask to the original image
+    #result = cv2.bitwise_and(img, img, mask=mask)
+    amount_yellow = cv2.countNonZero(mask)
+    #cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//yellow_logo.png", mask_yellow)
+    #cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//white_logo.png", mask_white)
+    #cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//logo.png", mask)
+    white_contours, ier = cv2.findContours(mask_white, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    yellow_contours, ier = cv2.findContours(mask_yellow, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    mask_contours, ier = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    #print(len(contours))    
+    #image = draw_rainbow_cont(contours,480,640)
+    yellow_image, yellow_aprox = aprox(yellow_contours,height, width)
+    white_image, white_aprox = aprox(white_contours,height, width)
+    parallel_img1 = parallel_lines(yellow_aprox)
+    cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//parallel_img1.png", parallel_img1)
+    res = convexYellow(yellow_aprox)
+    res_image, res_aprox = aprox(res,height, width)
+    cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//res_image.png", res_image)
+    parallel_img3 = parallel_lines(res_aprox)
+    cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//parallel_img3.png", parallel_img3)
+    parallel_img2 = parallel_lines(res)
+    cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//parallel_img2.png", parallel_img2)
+
+    cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//yellow_image.png", yellow_image)
+    cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//white_image.png", white_image)
+
+    #img = np.zeros((height, width, 3), np.uint8)
+    img, yellow_line = fiting_line(ColorLine.yellow, yellow_aprox,height, width, img_orig)
+    #cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//y_fline.png", y_fline) 
+    img, white_line = fiting_line(ColorLine.white, white_aprox,height, width, img)
+    current_angle = 0.0
+    #cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//2lines"+str(step)+".png", img)
+    #cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//img_orig"+str(step)+".png", img_orig)
+
+    try:
+        angle_white = mnk(white_aprox)
+        angle_yellow = mnk(yellow_aprox)
+        if np.isnan(angle_yellow):
+            angle_yellow = math.pi
+        if np.isnan(angle_white):
+            angle_white = math.pi
+        
+        current_angle = angle_yellow+angle_white
+        
+        text = str(current_angle)
+        position = (50, 100)  
+        font = cv2.FONT_HERSHEY_SIMPLEX 
+        font_scale = 2  
+        color = (0, 255, 0)  
+        thickness = 2  
+        line_type = cv2.LINE_AA  
+
+        cv2.putText(img, text, position, font, font_scale, color, thickness, line_type)
+
+        cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//today//mnk"+str(step)+".png", img)
+        
+        rainbow_count = draw_rainbow_cont(mask_contours,480,640)
+        cw_img, cw_line = centerCnts(white_contours,height, width)
+        cy_img, cy_line = centerCnts(yellow_contours,height, width)
+        m_img, m_line = centerCnts(mask_contours,height, width)
+    except TypeError as e:
+    # Обработка ошибки
+        print(f"Произошла ошибка: {e}")
+        print(f"yellow_line: {yellow_line}")
+        print(f"white_line: {white_line}")
+        quit()
+    
+    return current_angle
+    
+
+
+env = DuckietownEnv(
+	**{"seed": 128546,
+	"map_name": "zigzag_dists", # где-то в репозитории можно эти карты настраивать
+	"max_steps": 100,
+	"camera_width": 640,
+	"camera_height": 480,
+	"accept_start_angle_deg": 40, #what
+	"full_transparency": True,
+	"distortion": True,
+	"domain_rand": False
+	}
+)
+
+done = False
+obs = env.reset()
+step = 0
+ 
+# Параметры PID
+pid_lateral = PIDController(kp=0.5, ki=0.01, kd=0.1)
+#pid_angular = PIDController(kp=0.3, ki=0.0, kd=0.0)
+pid_angular = PIDController(kp=0.24, ki=0.012, kd=0.009)
+# pid_angular = PIDController(kp=0.23, ki=0.01, kd=0.015) - клонит влево
+# pid_angular = PIDController(kp=0.25, ki=0.015, kd=0.006) - съехал на повороте направо
+
+# Время обновления
+dt = 0.01  # в секундах
+
+
+    
+while not done:
+    # Положение робота
+    #current_position = 0.2
+    #desired_position = 0.0
+    desired_angle = 2.0     # желаемый угол (в градусах)
+    
+    current_angle = moving_test(obs, step) # угол отклонения от направления движения (в градусах)
+    step+=1
+
+    with open('pid_test.txt', 'a+') as f:
+       f.write(f"{step}  current_angle {current_angle}\n")
+    #lateral_error = desired_position - current_position
+    angular_error = desired_angle - current_angle
+
+    #lateral_control = pid_lateral.compute(lateral_error, dt)
+    angular_control = pid_angular.compute(angular_error, dt)
+
+    # Управляющие скорости
+    linear_speed = 1.0 #= max(0.1, 1.0 - abs(lateral_control))  # скорость снижается при большом отклонении
+    angular_speed = -angular_control  # коррекция угловой скорости
+
+    #with open('depend_speed_error.txt', 'a+') as f:
+    #   f.write(f"{step} angular_speed {angular_speed} current_angle {current_angle} angular_error {angular_error}\n")
+       
+    action = [linear_speed, angular_speed]
+    #action = [linear_speed, step*0.5]
+    obs, rew, done, info = env.step(np.array(action))
+    env.render()
+    

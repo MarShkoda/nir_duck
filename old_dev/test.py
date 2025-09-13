@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+
+import numpy as np
+from pyglet.window import key
+from gym_duckietown.envs import DuckietownEnv
+import cv2
+import enum
+import math
+from copy import copy, deepcopy
+
+
+@enum.unique
+class ColorLine(enum.Enum):
+    yellow = 2
+    white = 1
+
+def draw_rainbow_cont(contours, height, width):
+    #image = cv2.imread("//home//userubuntu//gym-duckietown//rubbish//logo2.png")
+    image = np.zeros((height, width, 3), np.uint8)
+    for i in range(len(contours)):
+        sel_countours=[contours[i]]
+        r = (10*i)%255
+        g = (5*i)%255
+        b = i+100
+        cv2.drawContours(image, sel_countours, -1, (r,g,b), 1)
+    return image
+
+def lines(edges, height, width):
+    houghLines = cv2.HoughLinesP( 1, np.pi / 180, 50, None, 50, 10)
+    image = np.zeros((height, width, 3), np.uint8)
+    if houghLines is not None:
+        #print(houghLines)
+        #for points in houghLines:
+        for i in range(len(houghLines)):
+      # Extracted points nested in the list
+            x1,y1,x2,y2=houghLines[i][0]
+            r = (10*i)%255
+            g = (5*i)%255
+            b = i+100
+            cv2.line(image,(x1,y1),(x2,y2),(r,g,b),2)
+    return image
+    
+    
+    
+def aprox(cnts, height, width):
+    #img = cv2.imread("//home//userubuntu//gym-duckietown//rubbish//logo3.png")
+    img = np.zeros((height, width, 3), np.uint8)
+    key = 1
+    #print('cnts')
+    #print(cnts)
+    approx_cnt = []
+    for cnt in cnts:
+        if (cv2.arcLength(cnt, True) > 40):
+            approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
+            approx_cnt.append(approx)
+            #print(len(approx))
+            if len(approx) < 3:
+                #print("Blue = pentagon")
+                cv2.drawContours(img, [approx], 0, (255, 255, 255), -1)
+            if len(approx) == 3:
+                #print("Blue = pentagon")
+                cv2.drawContours(img, [approx], 0, 255, -1)
+            elif len(approx) == 4:
+                if (key == 1):
+                    print(approx)
+                    key = 0
+                #print("Green = triangle")
+                cv2.drawContours(img, [approx], 0, (0, 255, 0), -1)
+            elif len(approx) == 5:
+                #print("Red = square")
+                cv2.drawContours(img, [approx], 0, (0, 0, 255), -1)
+            elif len(approx) == 6:
+                #print("Cyan = Hexa")
+                cv2.drawContours(img, [approx], 0, (255, 255, 0), -1)
+            elif len(approx) == 7:
+                #print("White = Octa")
+                cv2.drawContours(img, [approx], 0, (255, 255, 255), -1)
+            elif len(approx) < 13:
+                #print("White = Octa")
+                cv2.drawContours(img, [approx], 0, (0, 0, 0), -1)
+            elif len(approx) > 12:
+                #print("Yellow = circle")
+                cv2.drawContours(img, [approx], 0, (0, 255, 255), -1)
+    #print('approx_cnt')
+    #print(approx_cnt)
+    return img, approx_cnt
+
+def aproxLine(cnts, height, width):
+    img = np.zeros((height, width, 3), np.uint8)
+    key = 1
+    for cnt in cnts:
+        if (cv2.arcLength(cnt, True) > 20):
+            approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
+            #cv2.polylines(img, [approx], isClosed=False, color=(0, 255, 0), thickness=2)
+    return img
+    
+    
+def fiting_line(contours, height, width, img):
+    points = []
+    for cnt in contours:
+        sorted_cnt = sorted(cnt, key= lambda cnt: cnt[0][1])
+        print("sort")
+        print(sorted_cnt)
+        max_y1 = sorted_cnt[-1]
+        max_y2 = sorted_cnt[-2]
+        points.append((max_y1+max_y2)/2)
+        min_y1 = sorted_cnt[0]
+        min_y2 = sorted_cnt[1]
+        points.append((min_y1+min_y2)/2)
+    sorted_points = sorted(points, key= lambda pnts: pnts[0][1])
+    max_p = sorted_points[-1]
+    min_p = sorted_points[0]
+    print('sorted_points')
+    print(max_p[0])
+    print(max_p)
+    print('sorted_points')
+    print(min_p[0])
+    print(min_p)
+    cv2.line(img,(int(min_p[0][0]),int(min_p[0][1])),(int(max_p[0][0]),int(max_p[0][1])),(0,255,0),2)
+    line = [min_p, max_p]
+    print(line)
+    return img, line
+
+def region_selection(image, color):
+	mask = np.zeros_like(image) 
+	# if you pass an image with more then one channel
+	if len(image.shape) > 2:
+		channel_count = image.shape[2]
+		ignore_mask_color = (255,) * channel_count
+	else:
+		ignore_mask_color = 255
+	rows, cols = image.shape[:2]
+	if (ColorLine.yellow == color):
+		left_border = 0
+		right_border = 0.5
+	elif (ColorLine.white == color):
+		left_border = 0.5
+		right_border = 1
+	bottom_left = [cols * left_border, rows * 0.7]
+	bottom_right = [cols * right_border, rows * 0.7]
+	top_left = [cols * left_border, rows * 0.4]
+	top_right= [cols * right_border, rows * 0.4]
+	vertices = np.array([[bottom_left, top_left, top_right, bottom_right]], dtype=np.int32)
+	cv2.fillPoly(mask, vertices, ignore_mask_color)
+	masked_image = cv2.bitwise_and(image, mask)
+	return masked_image
+
+def moving(obs,step):
+    height = 480
+    width = 640
+    img = np.ascontiguousarray(obs)
+    mask_yellow = cv2.inRange(img, (140, 140, 0), (255, 255, 150)) #подобрать значения
+    mask_white = cv2.inRange(img, (160, 160, 160), (255, 255, 255))
+    mask_white = region_selection(mask_white, ColorLine.white)
+    mask_yellow = region_selection(mask_yellow, ColorLine.yellow)
+    mask = cv2.bitwise_or(mask_yellow, mask_white)
+    white_contours, ier = cv2.findContours(mask_white, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    yellow_contours, ier = cv2.findContours(mask_yellow, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    mask_contours, ier = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    print('len yellow ', len(yellow_contours))    
+    print('len white ',len(white_contours)) 
+    
+    rainbow_image, rainbow_aprox = aprox(mask_contours,height, width)
+    yellow_image, yellow_aprox = aprox(yellow_contours,height, width)
+    white_image, white_aprox = aprox(white_contours,height, width)
+    print('len yellow_aprox ', len(yellow_aprox))
+    print('len white_aprox ',len(white_aprox)) 
+    img = np.zeros((height, width, 3), np.uint8)
+    if (len(white_aprox) > 0):
+        img, white_line = fiting_line(white_aprox,height, width, img)
+        print('white_line', white_line)
+        if (len(yellow_aprox) == 0):
+            yellow_line = deepcopy(white_line)
+            yellow_line[0][0][0] = 0.0
+            yellow_line[1][0][0] = 0.0
+            yellow_line[0][0][1] = white_line[0][0][1]
+            yellow_line[1][0][1] = white_line[1][0][1]
+            print('yellow line', yellow_line)
+            print('white_line', white_line)
+    if (len(yellow_aprox) > 0):
+        img, yellow_line = fiting_line(yellow_aprox,height, width, img)
+        if (len(white_aprox) == 0):
+            white_line = deepcopy(yellow_line)
+            white_line[0][0][0] = 1.0
+            white_line[1][0][0] = 1.0
+            white_line[1][0][1] = yellow_line[1][0][1]
+            white_line[0][0][1] = yellow_line[0][0][1]
+    #print(yellow_line)
+    p1 = ((yellow_line[0][0]+white_line[0][0])/2)
+    p2 = ((yellow_line[1][0]+white_line[1][0])/2)
+    angle = 0.0
+    #print(p1)
+    #print(p2)
+    angle_radians = 0.0
+    if (p1[0] != p2[0]):
+        value = (p2[1] - p1[1])/(p2[0] - p1[0])
+        #print(p2[1] - p1[1])
+        #print(p2[0] - p1[0])
+        #print(value)
+        angle_radians = math.atan(value)
+# ПреобразовываемRadians в градусы для удобства
+    angle = math.degrees(angle_radians)
+    print('step', step, ' ', angle)
+    cv2.line(img,(int(p1[0]),int(p1[1])),(int(p2[0]),int(p2[1])),(0,255,0),2)
+    cv2.imwrite("//home//userubuntu//gym-duckietown//rubbish//lines"+str(step)+".png", img)
+   
+    return angle
+
+env2 = DuckietownEnv(
+    **{"seed": 128546, #128546
+    "map_name": "straight_road_with_duckie", # change this name to see an error and find where the maps are located
+    "max_steps": 1,
+    "camera_width": 640,
+    "camera_height": 480,
+    "accept_start_angle_deg": 0,
+    "full_transparency": True,
+    "distortion": True,
+    "domain_rand": False,
+    "camera_rand": False,
+    "user_tile_start": [0,0]
+    }
+)
+
+env = DuckietownEnv(
+	**{"seed": 128546,
+	"map_name": "loop_empty", # где-то в репозитории можно эти карты настраивать
+	"max_steps": 299,
+	"camera_width": 640,
+	"camera_height": 480,
+	"accept_start_angle_deg": 40, #what
+	"full_transparency": True,
+	"distortion": True,
+	"domain_rand": False
+	}
+)
+
+done = False
+obs = env.reset()
+step = 1
+
+while not done:
+    angle = moving(obs, step)
+    step+=1
+    action = [0.5, 0.0]
+    if (angle < 90.0): 
+        action = [0.5, 1.0]
+    elif (angle < -90.0): 
+        action = [0.5, -1.0]
+    obs, rew, done, info = env.step(np.array(action))
+    env.render()
+
+print('version',cv2.version)

@@ -1,0 +1,24 @@
+class PIDController:
+    def __init__(self, kp, ki, kd):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.previous_error = 0
+        self.integral = 0
+
+    def compute(self, error, dt):
+        proportional = self.kp * error
+        
+        self.integral += error * dt
+        integral = self.ki * self.integral
+        
+        derivative = self.kd * (error - self.previous_error) / dt
+        
+        # Обновление предыдущей ошибки
+        self.previous_error = error
+        #print('+++++')
+        #print("proportional " , proportional)
+        #print("integral " , integral)
+        #print("derivative " , derivative)
+        
+        return proportional + integral + derivative

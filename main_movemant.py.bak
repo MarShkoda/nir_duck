@@ -1,0 +1,52 @@
+import cv2
+import enum
+import math
+import numpy as np
+from scipy.linalg import solve_continuous_are
+from scipy import stats
+
+from pyglet.window import key
+from gym_duckietown.envs import DuckietownEnv
+from controllers.pid_controller import PIDController
+from image_processing.line_processing import ImageLineProcessing
+
+env = DuckietownEnv(
+	**{"seed": 128546,
+	"map_name": "zigzag_dists", # где-то в репозитории можно эти карты настраивать
+	"max_steps": 100,
+	"camera_width": 640,
+	"camera_height": 480,
+	"accept_start_angle_deg": 40, #what
+	"full_transparency": True,
+	"distortion": True,
+	"domain_rand": False
+	}
+)
+
+done = False
+obs = env.reset()
+step = 0
+
+pid_angular = PIDController(kp=0.24, ki=0.012, kd=0.009)
+
+def moving_test(obs,step):
+    img = np.ascontiguousarray(obs)
+    yellow_angle = ImageLineProcessing(img, ColorLine.yellow)
+    white_angle = ImageLineProcessing(img, ColorLine.white)
+
+while not done:
+    desired_angle = 2.0     # желаемый угол (в градусах)
+    
+    current_angle = moving_test(obs, step) # угол отклонения от направления движения (в градусах)
+    step+=1
+    angular_error = desired_angle - current_angle
+
+    angular_control = pid_angular.compute(angular_error, dt)
+
+    # Управляющие скорости
+    linear_speed = 1.0 #= max(0.1, 1.0 - abs(lateral_control))  # скорость снижается при большом отклонении
+    angular_speed = -angular_control  # коррекция угловой скорости
+
+    action = [linear_speed, angular_speed]
+    obs, rew, done, info = env.step(np.array(action))
+    env.render()
