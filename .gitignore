@@ -2,8 +2,12 @@
 *.pyc
 *.egg-info
 .idea/
+
 *.png
 *.txt
+*.bak
+*.mp4
+*Zone.Identifier
 
 xvfb.log
 bin
